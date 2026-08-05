@@ -1,0 +1,35 @@
+Dim swApp As SldWorks.SldWorks
+Dim swModel As ModelDoc2
+Dim swSelMgr As SelectionMgr
+Dim swComp As Component2
+
+Sub main()
+    On Error Resume Next
+
+    Set swApp = Application.SldWorks
+    Set swModel = swApp.ActiveDoc
+
+    If swModel Is Nothing Then Exit Sub
+
+    Set swSelMgr = swModel.SelectionManager
+    If swSelMgr Is Nothing Then Exit Sub
+    If swSelMgr.GetSelectedObjectCount2(-1) = 0 Then Exit Sub
+
+    Set swComp = swSelMgr.GetSelectedObjectsComponent4(1, -1)
+    If swComp Is Nothing Then Exit Sub
+
+    Dim parentComp As Component2
+    Dim targetComp As Component2
+    Set parentComp = swComp.GetParent
+
+    If Not parentComp Is Nothing Then
+        Set targetComp = parentComp
+    Else
+        Set targetComp = swComp
+    End If
+
+    MatesForm.LoadMates targetComp, swModel
+    MatesForm.Show vbModeless
+
+    On Error GoTo 0
+End Sub

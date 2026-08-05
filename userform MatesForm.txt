@@ -1,0 +1,423 @@
+Private swApp As SldWorks.SldWorks
+Private swModel As ModelDoc2
+Private mateFeatures() As SldWorks.Feature
+Private mateIsSuppressed() As Boolean
+Private mateHasError() As Boolean
+Private mateCompSuppressed() As Boolean
+Private mateCount As Integer
+Private listToData() As Integer   ' stroka spiska -> indeks dannykh, -1 = razdelitel
+Private savedComp As Component2
+
+Private Const CMD_EDIT_FEATURE As Long = 623
+
+Public Sub LoadMates(comp As Component2, model As ModelDoc2)
+    Set swApp = Application.SldWorks
+    Set swModel = model
+    Set savedComp = comp
+    mateCount = 0
+    lstMates.Clear
+
+    Me.Caption = "Ñîïðÿæåíèÿ"
+    lblTitle.Caption = comp.Name2
+
+    Dim vMates As Variant
+    vMates = comp.GetMates()
+
+    If IsEmpty(vMates) Then
+        lstMates.AddItem "  (ñîïðÿæåíèé íåò)"
+        ReDim listToData(0)
+        listToData(0) = -1
+        UpdateButtons
+        Exit Sub
+    End If
+
+    mateCount = UBound(vMates) + 1
+    ReDim mateFeatures(mateCount - 1)
+    ReDim mateIsSuppressed(mateCount - 1)
+    ReDim mateHasError(mateCount - 1)
+    ReDim mateCompSuppressed(mateCount - 1)
+
+    Dim i As Integer
+    For i = 0 To UBound(vMates)
+        Dim swFeat As SldWorks.Feature
+        Set swFeat = vMates(i)
+        Set mateFeatures(i) = swFeat
+
+        Dim bSupp As Boolean
+        bSupp = False
+        On Error Resume Next
+        bSupp = swFeat.IsSuppressed
+        On Error GoTo 0
+        mateIsSuppressed(i) = bSupp
+
+        Dim errCode As Long, isWarn As Boolean
+        errCode = 0
+        isWarn = False
+        On Error Resume Next
+        errCode = swFeat.GetErrorCode2(isWarn)
+        On Error GoTo 0
+        mateHasError(i) = (errCode <> 0) And (isWarn = False)
+
+        Dim compSupp As Boolean
+        compSupp = False
+        On Error Resume Next
+        Dim swMate As SldWorks.Mate2
+        Set swMate = swFeat.GetSpecificFeature2
+        Dim j As Integer
+        For j = 0 To 5
+            Dim swEnt As SldWorks.MateEntity2
+            Set swEnt = swMate.MateEntity(j)
+            If swEnt Is Nothing Then Exit For
+            Dim swRefComp As Component2
+            Set swRefComp = swEnt.ReferenceComponent
+            If Not swRefComp Is Nothing Then
+                If swRefComp.IsSuppressed Then compSupp = True
+            End If
+        Next j
+        On Error GoTo 0
+        mateCompSuppressed(i) = compSupp
+    Next i
+
+    ' ñîðòèðîâêà: 0=îøèáêè, 1=îáû÷íûå, 2=ïîãàøåíû, 3=íåäîñòóïíû
+    Dim sortOrder() As Integer
+    ReDim sortOrder(mateCount - 1)
+    Dim cat() As Long
+    ReDim cat(mateCount - 1)
+    For i = 0 To mateCount - 1
+        sortOrder(i) = i
+        cat(i) = CategoryOf(i) * 100000 + i
+    Next i
+
+    ' ïðîñòàÿ ñòàáèëüíàÿ ñîðòèðîâêà (âñòàâêàìè)
+    Dim a As Integer, b As Integer, tmpO As Integer, tmpC As Long
+    For a = 1 To mateCount - 1
+        tmpO = sortOrder(a)
+        tmpC = cat(a)
+        b = a - 1
+        Do While b >= 0
+            If cat(b) <= tmpC Then Exit Do
+            sortOrder(b + 1) = sortOrder(b)
+            cat(b + 1) = cat(b)
+            b = b - 1
+        Loop
+        sortOrder(b + 1) = tmpO
+        cat(b + 1) = tmpC
+    Next a
+
+    ReDim listToData(mateCount + 3)   ' çàïàñ íà ðàçäåëèòåëè
+    Dim rowN As Integer
+    rowN = 0
+    Dim prevCat As Integer
+    prevCat = -1
+
+    lstMates.Font.Name = "Segoe UI"
+    lstMates.Font.Size = 10
+
+    For i = 0 To mateCount - 1
+        Dim dataIdx As Integer
+        dataIdx = sortOrder(i)
+        Dim curCat As Integer
+        curCat = CategoryOf(dataIdx)
+
+        If prevCat <> -1 And curCat <> prevCat Then
+            lstMates.AddItem ""
+            listToData(rowN) = -1
+            rowN = rowN + 1
+        End If
+        prevCat = curCat
+
+        Dim swF As SldWorks.Feature
+        Set swF = mateFeatures(dataIdx)
+        Dim ico As String
+        ico = GetMateIcon(swF.GetTypeName2)
+
+        Dim line As String
+        If mateIsSuppressed(dataIdx) Then
+            line = "(" & ico & ")  " & swF.Name & "  [ïîãàøåíî]"
+        ElseIf mateCompSuppressed(dataIdx) Then
+            line = "(" & ico & ")  " & swF.Name & "  [íåäîñòóïíî]"
+        ElseIf mateHasError(dataIdx) Then
+            line = ChrW(9888) & " " & ico & "  " & swF.Name & "  [îøèáêà]"
+        Else
+            line = ico & "  " & swF.Name
+        End If
+
+        lstMates.AddItem line
+        listToData(rowN) = dataIdx
+        rowN = rowN + 1
+    Next i
+
+    UpdateButtons
+End Sub
+
+Private Function CategoryOf(idx As Integer) As Integer
+    If mateIsSuppressed(idx) Then
+        CategoryOf = 2
+    ElseIf mateCompSuppressed(idx) Then
+        CategoryOf = 3
+    ElseIf mateHasError(idx) Then
+        CategoryOf = 0
+    Else
+        CategoryOf = 1
+    End If
+End Function
+
+Private Function SelCount() As Integer
+    Dim n As Integer, r As Integer
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then n = n + 1
+    Next r
+    SelCount = n
+End Function
+
+' Vozvrashchayet INDEKS DANNYKH (ne stroki spiska!) pervogo vydelennogo
+' <-- âîçâðàùàåò èíäåêñ äàííûõ (íå ñòðîêè ñïèñêà!) ïåðâîãî âûäåëåííîãî
+Private Function FirstSelIdx() As Integer
+    Dim r As Integer
+    FirstSelIdx = -1
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            FirstSelIdx = listToData(r)
+            Exit Function
+        End If
+    Next r
+End Function
+
+Private Sub UpdateButtons()
+    Dim n As Integer
+    n = SelCount()
+
+    btnDelete.Enabled = (n > 0)
+
+    If n = 1 Then
+        Dim idx As Integer
+        idx = FirstSelIdx()
+        btnEdit.Enabled = (mateIsSuppressed(idx) = False) And (mateCompSuppressed(idx) = False)
+        btnToggleSuppress.Enabled = (mateCompSuppressed(idx) = False)
+    Else
+        btnEdit.Enabled = False
+        btnToggleSuppress.Enabled = (n > 0)
+    End If
+
+    If n > 0 Then
+        Dim hasActive As Boolean, hasSupp As Boolean
+        Dim r As Integer
+        For r = 0 To lstMates.ListCount - 1
+            If lstMates.Selected(r) And listToData(r) <> -1 Then
+                Dim di As Integer
+                di = listToData(r)
+                If mateCompSuppressed(di) = False Then
+                    If mateIsSuppressed(di) Then
+                        hasSupp = True
+                    Else
+                        hasActive = True
+                    End If
+                End If
+            End If
+        Next r
+        If hasSupp And (hasActive = False) Then
+            btnToggleSuppress.Caption = "Âêëþ÷èòü"
+        ElseIf hasActive And (hasSupp = False) Then
+            btnToggleSuppress.Caption = "Ïîãàñèòü"
+        Else
+            btnToggleSuppress.Caption = "Ïîãàñèòü/Âêëþ÷èòü"
+        End If
+    Else
+        btnToggleSuppress.Caption = "Ïîãàñèòü"
+    End If
+End Sub
+
+Private Function GetMateIcon(typeName As String) As String
+    Dim ico As String
+    Select Case typeName
+        Case "MateCoincident":    ico = ChrW(8801)
+        Case "MateParallel":      ico = ChrW(8741)
+        Case "MatePerpendicular": ico = ChrW(8869)
+        Case "MateTangent":       ico = ChrW(8764)
+        Case "MateConcentric":    ico = ChrW(9678)
+        Case "MateDistanceDim":   ico = ChrW(8596)
+        Case "MateAngleDim":      ico = ChrW(8736)
+        Case "MateSymmetric":     ico = ChrW(8660)
+        Case "MateWidth":         ico = ChrW(8863)
+        Case "MateGear":          ico = ChrW(9881)
+        Case "MateRackPinion":    ico = ChrW(9881)
+        Case "MateCamFollower":   ico = ChrW(8857)
+        Case "MateHinge":         ico = ChrW(8853)
+        Case "MateSlot":          ico = ChrW(8865)
+        Case Else:                ico = ChrW(9670)
+    End Select
+    GetMateIcon = ico
+End Function
+
+Private Sub SelectMateByIdx(idx As Integer, append As Boolean)
+    swModel.Extension.SelectByID2 _
+        mateFeatures(idx).Name, "MATE", 0, 0, 0, append, 0, Nothing, 0
+End Sub
+
+Private Sub btnConfigProperties_Click()
+
+End Sub
+
+Private Sub btnReplaceEntities_Click()
+    If swModel Is Nothing Then Exit Sub
+    If SelCount() = 0 Then Exit Sub
+
+    swModel.ClearSelection2 True
+    Dim addToSel As Boolean
+    addToSel = False
+    Dim r As Integer
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            SelectMateByIdx listToData(r), addToSel
+            addToSel = True
+        End If
+    Next r
+
+    swApp.RunCommand 574, ""
+End Sub
+
+Private Sub btnZoomToSelection_Click()
+    If swModel Is Nothing Then Exit Sub
+    If SelCount() = 0 Then Exit Sub
+
+    swModel.ClearSelection2 True
+    Dim addToSel As Boolean
+    addToSel = False
+    Dim r As Integer
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            SelectMateByIdx listToData(r), addToSel
+            addToSel = True
+        End If
+    Next r
+
+    swModel.ViewZoomToSelection
+End Sub
+
+Private Sub CommandButton1_Click()
+
+End Sub
+
+Private Sub lstMates_MouseUp(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    If swModel Is Nothing Then Exit Sub
+    UpdateButtons
+    swModel.ClearSelection2 True
+    If SelCount() = 1 Then
+        SelectMateByIdx FirstSelIdx(), False
+    End If
+End Sub
+
+Private Sub lstMates_DblClick(ByVal Cancel As MSForms.ReturnBoolean)
+    EditSelected
+End Sub
+
+Private Sub btnEdit_Click()
+    EditSelected
+End Sub
+
+Private Sub EditSelected()
+    If swModel Is Nothing Then Exit Sub
+    If SelCount() <> 1 Then Exit Sub
+    Dim idx As Integer
+    idx = FirstSelIdx()
+    If idx < 0 Then Exit Sub
+    If mateIsSuppressed(idx) Then Exit Sub
+    If mateCompSuppressed(idx) Then Exit Sub
+
+    swModel.ClearSelection2 True
+    SelectMateByIdx idx, False
+    swApp.RunCommand CMD_EDIT_FEATURE, ""
+End Sub
+
+Private Sub btnToggleSuppress_Click()
+    If swModel Is Nothing Then Exit Sub
+    If SelCount() = 0 Then Exit Sub
+
+    Dim hasActive As Boolean
+    Dim r As Integer
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            Dim di As Integer
+            di = listToData(r)
+            If mateCompSuppressed(di) = False Then
+                If mateIsSuppressed(di) = False Then hasActive = True
+            End If
+        End If
+    Next r
+
+    Dim selectedRows() As Integer
+    ReDim selectedRows(lstMates.ListCount - 1)
+    Dim selN As Integer
+    selN = 0
+
+    swModel.ClearSelection2 True
+    Dim addToSel As Boolean
+    addToSel = False
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            Dim dataIdx As Integer
+            dataIdx = listToData(r)
+            If mateCompSuppressed(dataIdx) = False Then
+                selectedRows(selN) = r
+                selN = selN + 1
+                SelectMateByIdx dataIdx, addToSel
+                addToSel = True
+            End If
+        End If
+    Next r
+
+    If selN = 0 Then Exit Sub
+
+    If hasActive Then
+        swApp.RunCommand 14, ""
+    Else
+        swApp.RunCommand 15, ""
+    End If
+
+    ' Zapominaem imena vydelennykh mate dlya vosstanovleniya posle sortirovki
+    ' <-- çàïîìèíàåì èìåíà âûäåëåííûõ ìåéòîâ äëÿ âîññòàíîâëåíèÿ ïîñëå ñîðòèðîâêè
+    Dim selNames() As String
+    ReDim selNames(selN - 1)
+    Dim k As Integer
+    For k = 0 To selN - 1
+        selNames(k) = mateFeatures(listToData(selectedRows(k))).Name
+    Next k
+
+    LoadMates savedComp, swModel
+
+    For r = 0 To lstMates.ListCount - 1
+        If listToData(r) <> -1 Then
+            Dim nm As String
+            nm = mateFeatures(listToData(r)).Name
+            For k = 0 To selN - 1
+                If nm = selNames(k) Then
+                    lstMates.Selected(r) = True
+                    Exit For
+                End If
+            Next k
+        End If
+    Next r
+    UpdateButtons
+End Sub
+
+Private Sub btnDelete_Click()
+    If swModel Is Nothing Then Exit Sub
+    If SelCount() = 0 Then Exit Sub
+
+    swModel.ClearSelection2 True
+    Dim addToSel As Boolean
+    addToSel = False
+    Dim r As Integer
+    For r = 0 To lstMates.ListCount - 1
+        If lstMates.Selected(r) And listToData(r) <> -1 Then
+            SelectMateByIdx listToData(r), addToSel
+            addToSel = True
+        End If
+    Next r
+
+    swModel.Extension.DeleteSelection2 False
+
+    LoadMates savedComp, swModel
+    UpdateButtons
+End Sub
+
