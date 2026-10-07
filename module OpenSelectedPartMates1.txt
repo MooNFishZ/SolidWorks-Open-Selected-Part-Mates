@@ -1,3 +1,5 @@
+Option Explicit
+
 Dim swApp As SldWorks.SldWorks
 Dim swModel As ModelDoc2
 Dim swSelMgr As SelectionMgr
@@ -18,18 +20,28 @@ Sub main()
     Set swComp = swSelMgr.GetSelectedObjectsComponent4(1, -1)
     If swComp Is Nothing Then Exit Sub
 
-    Dim parentComp As Component2
     Dim targetComp As Component2
-    Set parentComp = swComp.GetParent
-
-    If Not parentComp Is Nothing Then
-        Set targetComp = parentComp
-    Else
-        Set targetComp = swComp
-    End If
+    Set targetComp = ClimbToTopLevel(swComp)
 
     MatesForm.LoadMates targetComp, swModel
     MatesForm.Show vbModeless
 
     On Error GoTo 0
 End Sub
+
+' Podnimayemsya po derevu do komponenta verkhnego urovnya tekushchey sborki
+' <-- ïîäíèìàåìñÿ ïî äåðåâó äî êîìïîíåíòà âåðõíåãî óðîâíÿ òåêóùåé ñáîðêè
+Private Function ClimbToTopLevel(comp As Component2) As Component2
+    On Error GoTo Fail
+
+    Dim c As Component2
+    Set c = comp
+    Do While Not c.GetParent Is Nothing
+        Set c = c.GetParent
+    Loop
+    Set ClimbToTopLevel = c
+    Exit Function
+
+Fail:
+    Set ClimbToTopLevel = comp
+End Function
