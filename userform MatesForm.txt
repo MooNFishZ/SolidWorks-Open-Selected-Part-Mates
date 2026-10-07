@@ -60,21 +60,35 @@ Public Sub LoadMates(comp As Component2, model As ModelDoc2)
 
         Dim compSupp As Boolean
         compSupp = False
-        On Error Resume Next
+
         Dim swMate As SldWorks.Mate2
+        Set swMate = Nothing
+        On Error Resume Next
         Set swMate = swFeat.GetSpecificFeature2
-        Dim j As Integer
-        For j = 0 To 5
-            Dim swEnt As SldWorks.MateEntity2
-            Set swEnt = swMate.MateEntity(j)
-            If swEnt Is Nothing Then Exit For
-            Dim swRefComp As Component2
-            Set swRefComp = swEnt.ReferenceComponent
-            If Not swRefComp Is Nothing Then
-                If swRefComp.IsSuppressed Then compSupp = True
-            End If
-        Next j
         On Error GoTo 0
+
+        If Not swMate Is Nothing Then
+            Dim j As Integer
+            For j = 0 To 5
+                Dim swEnt As SldWorks.MateEntity2
+                Set swEnt = Nothing
+                On Error Resume Next
+                Set swEnt = swMate.MateEntity(j)
+                On Error GoTo 0
+                If swEnt Is Nothing Then Exit For
+
+                Dim swRefComp As Component2
+                Set swRefComp = Nothing
+                On Error Resume Next
+                Set swRefComp = swEnt.ReferenceComponent
+                On Error GoTo 0
+
+                If Not swRefComp Is Nothing Then
+                    If swRefComp.IsSuppressed Then compSupp = True
+                End If
+            Next j
+        End If
+
         mateCompSuppressed(i) = compSupp
     Next i
 
